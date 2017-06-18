@@ -1,9 +1,15 @@
-from abc import ABC, abstractmethod, ABCMeta
+import logging
 from typing import Sequence
+from abc import ABC, abstractmethod, ABCMeta
 
 import queue
 import threading
 import multiprocessing
+
+
+format = "[%(filename)s:%(lineno)4s - %(funcName)20s] %(message)s"
+logging.basicConfig(filename='pipeline.log', level=logging.DEBUG,
+                    format=format, filemode='w')
 
 
 DEFAULT_WAIT_TIMEOUT = 1
@@ -15,7 +21,7 @@ class ExternalStopEvent(Exception):
     pass
 
 
-def _find_get_worker_and_event(backend):
+def _find_inits(backend):
     if backend == 'thread':
         get_worker = threading.Thread
         get_event = threading.Event
@@ -37,33 +43,36 @@ class _BasicWorkersPool(ABC):
         self.buffer_size = buffer_size
         self.wait_timeout = wait_timeout
 
-        self._get_worker, self._get_event = _find_get_worker_and_event(backend)
+        self._init_worker, self._init_event = _find_inits(backend)
 
         self.workers_active = False
-        self.external_stop_event = self._get_event()
+        self.external_stop_event = self._init_event()
         self.workers = None
         self.queue_in = None
         self.queue_out = queue.Queue(maxsize=self.buffer_size)
 
-    def start_workers(self):
+    def start(self):
         assert self._check_consistency
         assert not self.workers_active
 
-        self.workers = [self._start_worker() for _ in range(self.n_workers)]
+        logging.debug(f'Starting workers for {self.__class__}')
+        self.workers = [self._make_worker() for _ in range(self.n_workers)]
 
         for w in self.workers:
             w.start()
 
         self.workers_active = True
+        logging.debug(f'Workers for {self.__class__} started')
 
-    def stop_workers(self):
+    def stop(self):
         assert self.workers_active
         self.external_stop_event.set()
 
-        print('Starting waining for worker')
+        logging.debug(f'Stopping workers for {self.__class__}')
+        logging.debug('Starting waiting for worker to finish')
         for w in self.workers:
             w.join()
-        print('Worker stopped')
+        logging.debug('Worker stopped')
 
         self.workers_active = False
 
@@ -87,18 +96,13 @@ class _BasicWorkersPool(ABC):
         else:
             raise ExternalStopEvent
 
-    def _start_worker(self):
-        worker = self._get_worker(target=self._worker_target)
+    def _make_worker(self):
+        worker = self._init_worker(target=self._worker_target)
         return worker
 
     def __del__(self):
-        print('Del called on {}'.format(self.__class__))
         if self.workers_active:
-            print('Stopping workers...')
-            self.stop_workers()
-            print('Workers stopped')
-        else:
-            print('All workers were already stopped')
+            self.stop()
 
     @abstractmethod
     def _check_consistency(self):
@@ -126,8 +130,11 @@ class LambdaTransformer(Transformer):
         try:
             while True:
                 inputs = self._get_loop()
+                logging.debug('Object received')
                 processed_data = self.f(inputs)
+                logging.debug('Object processed')
                 self._put_loop(processed_data)
+                logging.debug('Object sent further')
                 self.queue_in.task_done()
         except ExternalStopEvent:
             pass
@@ -159,7 +166,7 @@ class Source(_BasicWorkersPool):
     def __init__(self, iterable, backend='thread', buffer_size=0):
         super().__init__(1, backend, buffer_size)
         self.iterable = iterable
-        self.source_exhausted_event = self._get_event()
+        self.source_exhausted_event = self._init_event()
 
     def _check_consistency(self):
         return True
@@ -169,20 +176,58 @@ class Source(_BasicWorkersPool):
         try:
             while True:
                 inputs = next(iterable)
+                logging.debug('New object got from generator')
                 self._put_loop(inputs)
+                logging.debug('New object sent further')
 
         except StopIteration:
-            print('Stop it iteration')
+            logging.debug('Stop iteration in')
             self.source_exhausted_event.set()
         except ExternalStopEvent:
             pass
 
 
-class Pipeline:
-    def __init__(self, source: Source, *transformers: Sequence[Transformer],
-                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
+class _PipelineMonitor:
+    def __init__(self, components: Sequence[_BasicWorkersPool],
+                 source_exhausted_event, pipeline_exhausted_event,
+                 wait_timeout):
         self.wait_timeout = wait_timeout
+
+        self.components = components
+        self.source_exhausted_event = source_exhausted_event
+        self.stop_monitor_event = threading.Event()
+        self.pipeline_exhausted_event = pipeline_exhausted_event
+
+        self.monitor = None
+
+    def _monitor_target(self):
+        while not self.stop_monitor_event.is_set():
+            if not self.source_exhausted_event.wait(timeout=self.wait_timeout):
+                continue
+            else:
+                # Wait for all components to finish and send signal
+                logging.debug('Monitor got exhausted signal')
+                for c in self.components:
+                    c.queue_out.join()
+
+                logging.debug('Queue exhausted')
+                self.pipeline_exhausted_event.set()
+                break
+
+    def start(self):
+        self.monitor = threading.Thread(target=self._monitor_target)
+        self.monitor.start()
+
+    def stop(self):
+        self.stop_monitor_event.set()
+        self.monitor.join()
+
+
+class Pipeline:
+    def __init__(self, source: Source, *transformers: Transformer,
+                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
         self.components = [source, *transformers]
+        self.wait_timeout = wait_timeout
         # Connect queues
         for c_p, c_n in zip(self.components, transformers):
             c_n.queue_in = c_p.queue_out
@@ -192,64 +237,46 @@ class Pipeline:
         self.pipeline_active = False
 
         # Inner connections to stop pipeline, if source is exhausted
-        self.source_exhausted_event = source.source_exhausted_event
-        self.pipeline_exhausted = threading.Event()
-        self.stop_monitor_event = threading.Event()
-        self.monitor = None
+        self.pipeline_exhausted_event = threading.Event()
+        self.monitor = _PipelineMonitor(
+            self.components, source.source_exhausted_event,
+            self.pipeline_exhausted_event, wait_timeout=wait_timeout)
 
     def _stop_pipeline(self):
         if self.pipeline_active:
-            print('Stopping pipeline...', flush=True)
+            logging.debug('Stopping pipeline...')
             for c in self.components:
-                c.stop_workers()
+                c.stop()
+            self.monitor.stop()
 
-            self.stop_monitor_event.set()
-
+            logging.debug('Pipeline stopped')
             self.pipeline_active = False
 
     def __enter__(self):
-        self._start_monitor()
+        self.monitor.start()
         for c in self.components:
-            c.start_workers()
+            c.start()
 
         self.pipeline_active = True
 
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        print('Exit called')
+        logging.debug('Exit called')
         self._stop_pipeline()
-
-    def __del__(self):
-        self._stop_pipeline()
-
-    def _monitor_target(self):
-        while not self.stop_monitor_event.is_set():
-            if not self.source_exhausted_event.wait(timeout=self.wait_timeout):
-                continue
-            else:
-                # Wait for all components to finish and send signal
-                print('Monitor got exhausted signal')
-                for c in self.components:
-                    c.queue_out.join()
-
-                print('Queue exhausted')
-                self.pipeline_exhausted.set()
-                break
-
-    def _start_monitor(self):
-        monitor = threading.Thread(target=self._monitor_target)
-        monitor.start()
+    #
+    # def __del__(self):
+    #     self._stop_pipeline()
 
     def __iter__(self):
-        while not self.pipeline_exhausted.is_set():
+        while not self.pipeline_exhausted_event.is_set():
             try:
                 data = self.queue.get(timeout=self.wait_timeout)
-
                 self.queue.task_done()
+
                 yield data
             except queue.Empty:
-                print('Empty pipeline, waiting for next object', flush=True)
+                logging.debug('Empty pipeline, waiting for next object')
             except Exception:
                 self._stop_pipeline()
                 raise
