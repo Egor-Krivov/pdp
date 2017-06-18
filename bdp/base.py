@@ -12,7 +12,7 @@ logging.basicConfig(filename='pipeline.log', level=logging.DEBUG,
                     format=format, filemode='w')
 
 
-DEFAULT_WAIT_TIMEOUT = 1
+DEFAULT_WAIT_TIMEOUT = 0.2
 
 
 class ExternalStopEvent(Exception):
@@ -41,6 +41,7 @@ class _BasicWorkersPool(ABC):
                  wait_timeout=DEFAULT_WAIT_TIMEOUT):
         self.n_workers = n_workers
         self.buffer_size = buffer_size
+        self.backend = backend
         self.wait_timeout = wait_timeout
 
         self._init_worker, self._init_event = _find_inits(backend)
@@ -49,7 +50,7 @@ class _BasicWorkersPool(ABC):
         self.external_stop_event = self._init_event()
         self.workers = None
         self.queue_in = None
-        self.queue_out = queue.Queue(maxsize=self.buffer_size)
+        self.queue_out = None
 
     def start(self):
         assert self._check_consistency
@@ -117,7 +118,7 @@ class _BasicWorkersPool(ABC):
 
 class Transformer(_BasicWorkersPool, metaclass=ABCMeta):
     def _check_consistency(self):
-        return self.queue_in is not None
+        return self.queue_in is not None and self.queue_out is not None
 
 
 class LambdaTransformer(Transformer):
@@ -166,10 +167,11 @@ class Source(_BasicWorkersPool):
     def __init__(self, iterable, backend='thread', buffer_size=0):
         super().__init__(1, backend, buffer_size)
         self.iterable = iterable
+
         self.source_exhausted_event = self._init_event()
 
     def _check_consistency(self):
-        return True
+        return self.queue_out is not None
 
     def _worker_target(self):
         iterable = iter(self.iterable)
@@ -181,7 +183,7 @@ class Source(_BasicWorkersPool):
                 logging.debug('New object sent further')
 
         except StopIteration:
-            logging.debug('Stop iteration in')
+            logging.debug('Stop iteration happened on iterable')
             self.source_exhausted_event.set()
         except ExternalStopEvent:
             pass
@@ -228,10 +230,9 @@ class Pipeline:
                  wait_timeout=DEFAULT_WAIT_TIMEOUT):
         self.components = [source, *transformers]
         self.wait_timeout = wait_timeout
-        # Connect queues
-        for c_p, c_n in zip(self.components, transformers):
-            c_n.queue_in = c_p.queue_out
 
+        # Connect transformers with queues
+        self._connect_components(self.components)
         self.queue = self.components[-1].queue_out
 
         self.pipeline_active = False
@@ -241,6 +242,25 @@ class Pipeline:
         self.monitor = _PipelineMonitor(
             self.components, source.source_exhausted_event,
             self.pipeline_exhausted_event, wait_timeout=wait_timeout)
+
+    @staticmethod
+    def _connect_components(components: Sequence[_BasicWorkersPool]):
+        for c_in, c_out in zip(components[:-1], components[1:]):
+            buffer_size = c_in.buffer_size
+            if c_in.backend == 'thread' and c_out.backend == 'thread':
+                q = queue.Queue(buffer_size)
+            else:
+                q = multiprocessing.JoinableQueue(buffer_size)
+
+            c_in.queue_out = c_out.queue_in = q
+
+        c = components[-1]
+        if c.backend == 'thread':
+            c.queue_out = queue.Queue(c.buffer_size)
+        elif c.backend == 'process':
+            c.queue_out = multiprocessing.JoinableQueue(c.buffer_size)
+        else:
+            raise ValueError('Wrong backend')
 
     def _stop_pipeline(self):
         if self.pipeline_active:
