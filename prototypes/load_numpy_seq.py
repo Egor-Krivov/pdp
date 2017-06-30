@@ -1,11 +1,7 @@
-import time
-
-import numpy as np
+from numpy_work import work
 from tqdm import tqdm
 
-from numpy_work import work
 from data_loaders import Brats2017
-from bdp import Pipeline, LambdaTransformer, Source
 
 data_loader = Brats2017('/mount/hdd/brats2017/processed')
 
@@ -22,5 +18,5 @@ if __name__ == '__main__':
 
     for p in tqdm(patients):
         mscan, segm = load_data(p)
-        work()
-
+        y = work()
+        y.mean()

@@ -1,9 +1,10 @@
 import time
 import numpy as np
 
-n = 2000
+n = 1500
 
-def work():
+
+def work(z=None):
     x = np.random.randn(n, n)
     y = np.linalg.inv(x)
     return y
