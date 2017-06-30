@@ -1,4 +1,3 @@
-import numpy as np
 from tqdm import tqdm
 
 from data_loaders import Brats2017
