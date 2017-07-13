@@ -3,17 +3,17 @@ import queue
 import logging
 import threading
 import multiprocessing
-from typing import Sequence
+from typing import Sequence, Iterable
 from collections import deque
 from abc import ABC, abstractmethod, ABCMeta
 
-
-format = "[%(filename)s:%(lineno)4s - %(funcName)20s] %(message)s"
-logging.basicConfig(filename='pipeline.log', level=logging.DEBUG,
-                    format=format, filemode='w')
-
+logging.basicConfig(
+    filename='pipeline.log', level=logging.INFO, filemode='w',
+    format='%(levelno)d [%(asctime)s.%(msecs)03d] %(message)s',
+    datefmt='%H:%M:%S')
 
 DEFAULT_WAIT_TIMEOUT = 0.1
+DEFAULT_MONITOR_TIMEOUT = 1
 
 
 class ExternalStop(Exception):
@@ -62,31 +62,31 @@ class _BasicWorkersPool(ABC):
 
     def _check_external_stop(self):
         if self.external_stop_event.is_set():
-            logging.debug('Discovered external stop, raising error')
+            logging.info('Discovered external stop, raising error')
             raise ExternalStop
 
     def start(self):
         assert self._check_consistency
         assert not self.workers_active
 
-        logging.debug(f'Starting workers for {self.__class__}')
+        logging.info(f'Starting workers for {self.__class__}')
         self.workers = [self._init_worker(target=self._worker_target)
                         for _ in range(self.n_workers)]
         for w in self.workers:
             w.start()
 
         self.workers_active = True
-        logging.debug(f'Workers for {self.__class__} started')
+        logging.info(f'Workers for {self.__class__} started')
 
     def stop(self):
         assert self.workers_active
         self.external_stop_event.set()
 
-        logging.debug(f'Stopping workers for {self.__class__}')
-        logging.debug('Starting waiting for worker to finish')
+        logging.info(f'Stopping workers for {self.__class__}')
+        logging.info('Starting waiting for worker to finish')
         for w in self.workers:
             w.join()
-        logging.debug('Worker stopped')
+        logging.info('Worker stopped')
 
         self.workers_active = False
 
@@ -101,7 +101,7 @@ class _BasicWorkersPool(ABC):
                 continue
 
     def _process_source_exhausted_loop(self):
-        logging.debug('processing source exhausted')
+        logging.info('processing source exhausted')
         self.source_exhausted_event.set()
 
         while True:
@@ -126,13 +126,13 @@ class _BasicWorkersPool(ABC):
             if inputs is not SourceExhausted:
                 return inputs
             else:
-                logging.debug('source was exhausted')
+                logging.info('source was exhausted')
                 self.queue_in.task_done()
-                logging.debug('{}'.format(self.queue_in.qsize()))
+                logging.info('{}'.format(self.queue_in.qsize()))
                 self.queue_in.join()
-                logging.debug('in queue was exhausted, sending message')
+                logging.info('in queue was exhausted, sending message')
                 self._process_source_exhausted_loop()
-                logging.debug('message about exhaustion was send')
+                logging.info('message about exhaustion was send')
                 raise SourceExhausted
 
     def __del__(self):
@@ -198,7 +198,7 @@ class Chunker(Transformer):
 
 
 class Source(_BasicWorkersPool):
-    def __init__(self, iterable, backend='thread', buffer_size=0):
+    def __init__(self, iterable: Iterable, backend='thread', buffer_size=0):
         super().__init__(1, backend, buffer_size)
         self.iterable = iterable
 
@@ -206,16 +206,16 @@ class Source(_BasicWorkersPool):
         return self.queue_out is not None
 
     def _worker_target(self):
-        iterable = iter(self.iterable)
+        iterator = iter(self.iterable)
         try:
             while True:
                 try:
-                    inputs = next(iterable)
-                    logging.debug('New object got from generator')
+                    inputs = next(iterator)
+                    logging.debug('New object got from iterator')
                     self._put_loop(inputs)
                     logging.debug('New object sent further')
                 except StopIteration:
-                    logging.debug('Stop iteration happened on iterable')
+                    logging.debug('Stop iteration happened on iterator')
                     self._process_source_exhausted_loop()
                     raise SourceExhausted
         except (ExternalStop, SourceExhausted):
@@ -224,7 +224,7 @@ class Source(_BasicWorkersPool):
 
 class _PipelineMonitor:
     def __init__(self, components: Sequence[_BasicWorkersPool],
-                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
+                 wait_timeout=DEFAULT_MONITOR_TIMEOUT):
         self.wait_timeout = wait_timeout
 
         self.components = components
@@ -236,7 +236,7 @@ class _PipelineMonitor:
     def _target(self):
         while not self.external_stop_event.is_set():
             s = [c.queue_out.qsize() for c in self.components]
-            logging.debug(f'queues: {s}')
+            logging.info(f'queues: {s}')
             time.sleep(self.wait_timeout)
 
     def start(self):
@@ -283,12 +283,12 @@ class Pipeline:
 
     def _stop(self):
         if self.pipeline_active:
-            logging.debug('Stopping pipeline...')
+            logging.info('Stopping pipeline...')
             self.monitor.stop()
             for c in self.components:
                 c.stop()
 
-            logging.debug('Pipeline stopped')
+            logging.info('Pipeline stopped')
             self.pipeline_active = False
 
     def _start(self):
@@ -312,7 +312,6 @@ class Pipeline:
             try:
                 data = self.queue.get(timeout=self.wait_timeout)
             except queue.Empty:
-                logging.debug('Empty pipeline, waiting for next object')
                 continue
             # This is slightly shady. In this case pipeline monitor might
             # start thinking that pipeline was exhausted. It won't
@@ -328,6 +327,6 @@ class Pipeline:
                               'were stopped')
 
                 raise StopIteration
-
+            logging.info('Pipeline: next returned')
             yield data
-
+            logging.info('Pipeline: next called')
