@@ -301,6 +301,7 @@ class Pipeline:
 
     def __enter__(self):
         self._start()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         logging.debug('Exit called')
