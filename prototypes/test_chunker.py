@@ -1,6 +1,6 @@
 from tqdm import tqdm
 
-from bdp import Pipeline, Source, Chunker
+from pdp import Pipeline, Source, Chunker
 
 
 if __name__ == '__main__':

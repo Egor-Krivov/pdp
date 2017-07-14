@@ -44,8 +44,8 @@ class _BasicWorkersPool(ABC):
     """Base class for distributed computing of some sort. All implementations
     should support contract:
         use only put"""
-    def __init__(self, n_workers, backend, buffer_size,
-                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
+    def __init__(self, *, n_workers, backend, buffer_size,
+                 wait_timeout):
         self.n_workers = n_workers
         self.buffer_size = buffer_size
         self.backend = backend
@@ -156,9 +156,10 @@ class Transformer(_BasicWorkersPool, metaclass=ABCMeta):
 
 
 class LambdaTransformer(Transformer):
-    def __init__(self, f, n_workers, backend='thread', buffer_size=0,
+    def __init__(self, f, *, n_workers=1, backend='thread', buffer_size=1,
                  wait_timeout=DEFAULT_WAIT_TIMEOUT):
-        super().__init__(n_workers, backend, buffer_size, wait_timeout)
+        super().__init__(n_workers=n_workers, backend=backend,
+                         buffer_size=buffer_size, wait_timeout=wait_timeout)
         self.f = f
 
     def _worker_target(self):
@@ -176,9 +177,10 @@ class LambdaTransformer(Transformer):
 
 
 class Chunker(Transformer):
-    def __init__(self, chunk_size, backend='thread', buffer_size=0,
+    def __init__(self, chunk_size, *, backend='thread', buffer_size=1,
                  wait_timeout=DEFAULT_WAIT_TIMEOUT):
-        super().__init__(1, backend, buffer_size, wait_timeout)
+        super().__init__(n_workers=1, backend=backend, buffer_size=buffer_size,
+                         wait_timeout=wait_timeout)
         self.chunk_size = chunk_size
 
     def _worker_target(self):
@@ -198,8 +200,10 @@ class Chunker(Transformer):
 
 
 class Source(_BasicWorkersPool):
-    def __init__(self, iterable: Iterable, backend='thread', buffer_size=0):
-        super().__init__(1, backend, buffer_size)
+    def __init__(self, iterable: Iterable, *, backend='thread', buffer_size=1,
+                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
+        super().__init__(n_workers=1, backend=backend, buffer_size=buffer_size,
+                         wait_timeout=wait_timeout)
         self.iterable = iterable
 
     def _check_consistency(self):
