@@ -1,262 +1,159 @@
 import time
-import queue
 import logging
-import threading
-import multiprocessing
+from functools import partial
 from typing import Sequence, Iterable
-from collections import deque
-from abc import ABC, abstractmethod, ABCMeta
+from contextlib import suppress
+
+from queue import Queue as ThreadQueue
+from threading import Event as ThreadEvent
+from multiprocessing import Queue as ProcessQueue
+from multiprocessing import Event as ProcessEvent
+from threading import Thread
+from multiprocessing import Process
+from queue import Empty, Full
+from multiprocessing.pool import Pool as ProcessPool
+from multiprocessing.pool import ThreadPool
 
 logging.basicConfig(
     filename='pipeline.log', level=logging.INFO, filemode='w',
     format='%(levelno)d [%(asctime)s.%(msecs)03d] %(message)s',
     datefmt='%H:%M:%S')
 
-DEFAULT_WAIT_TIMEOUT = 0.1
+DEFAULT_TIMEOUT = 0.1
 DEFAULT_MONITOR_TIMEOUT = 1
 
 
-class ExternalStop(Exception):
-    """Exception, signalling about external need to stop worker. Should be
+class StopEvent(Exception):
+    """Exception, need to stop worker. Should be
     handled internally by worker's target during execution"""
     pass
 
 
-class SourceExhausted(Exception):
-    """Exception, signalling about exhaustion of the source. Should be
-    handled internally by worker's target during execution"""
-    pass
-
-
-def _find_inits(backend):
+def choose_by_backend(backend, thread_option, process_option):
     if backend == 'thread':
-        get_worker = threading.Thread
-        get_event = threading.Event
+        return thread_option
     elif backend == 'process':
-        get_worker = multiprocessing.Process
-        get_event = multiprocessing.Event
+        return process_option
     else:
         raise ValueError('Wrong backend')
-    return get_worker, get_event
 
 
-class _BasicWorkersPool(ABC):
-    """Base class for distributed computing of some sort. All implementations
-    should support contract:
-        use only put"""
-    def __init__(self, *, n_workers, backend, buffer_size,
-                 wait_timeout):
-        self.n_workers = n_workers
-        self.buffer_size = buffer_size
-        self.backend = backend
-        self.wait_timeout = wait_timeout
+class LoopedQueue:
+    def __init__(self, queue: ThreadQueue, timeout, stop_event: ThreadEvent):
+        self.queue = queue
+        self.timeout = timeout
+        self.stop_event = stop_event
 
-        self._init_worker, self._init_event = _find_inits(backend)
-
-        self.workers_active = False
-        self.external_stop_event = self._init_event()
-        self.source_exhausted_event = self._init_event()
-        self.workers = None
-        self.queue_in = None
-        self.queue_out = None
-
-    def _check_external_stop(self):
-        if self.external_stop_event.is_set():
-            logging.info('Discovered external stop, raising error')
-            raise ExternalStop
-
-    def start(self):
-        assert self._check_consistency
-        assert not self.workers_active
-
-        logging.info(f'Starting workers for {self.__class__}')
-        self.workers = [self._init_worker(target=self._worker_target)
-                        for _ in range(self.n_workers)]
-        for w in self.workers:
-            w.start()
-
-        self.workers_active = True
-        logging.info(f'Workers for {self.__class__} started')
-
-    def stop(self):
-        assert self.workers_active
-        self.external_stop_event.set()
-
-        logging.info(f'Stopping workers for {self.__class__}')
-        logging.info('Starting waiting for worker to finish')
-        for w in self.workers:
-            w.join()
-        logging.info('Worker stopped')
-
-        self.workers_active = False
-
-    def _put_loop(self, value):
+    def put(self, value):
         while True:
-            self._check_external_stop()
-
-            try:
-                self.queue_out.put(value, timeout=self.wait_timeout)
+            if self.stop_event.is_set():
+                raise StopEvent
+            with suppress(Full):
+                self.queue.put(value, timeout=self.timeout)
                 break
-            except queue.Full:
-                continue
 
-    def _process_source_exhausted_loop(self):
-        logging.info('processing source exhausted')
-        self.source_exhausted_event.set()
-
+    def get(self):
         while True:
-            self._check_external_stop()
-            try:
-                self.queue_out.put(SourceExhausted, timeout=self.wait_timeout)
-                break
-            except queue.Full:
-                continue
+            if self.stop_event.is_set():
+                raise StopEvent
+            with suppress(Empty):
+                return self.queue.get(timeout=self.timeout)
 
-    def _get_loop(self):
-        while True:
-            if self.source_exhausted_event.is_set():
-                raise SourceExhausted
-            self._check_external_stop()
-
-            try:
-                inputs = self.queue_in.get(timeout=self.wait_timeout)
-            except queue.Empty:
-                continue
-
-            if inputs is not SourceExhausted:
-                return inputs
-            else:
-                logging.info('source was exhausted')
-                self.queue_in.task_done()
-                logging.info('{}'.format(self.queue_in.qsize()))
-                self.queue_in.join()
-                logging.info('in queue was exhausted, sending message')
-                self._process_source_exhausted_loop()
-                logging.info('message about exhaustion was send')
-                raise SourceExhausted
-
-    def __del__(self):
-        if self.workers_active:
-            self.stop()
-
-    @abstractmethod
-    def _check_consistency(self):
-        """Method is called before starting workers, to ensure objects
-         consistency"""
-
-    @abstractmethod
-    def _worker_target(self):
-        """Method, describing worker process"""
-        pass
+    def __getattr__(self, name):
+        return getattr(self.queue, name)
 
 
-class Transformer(_BasicWorkersPool, metaclass=ABCMeta):
-    def _check_consistency(self):
-        return self.queue_in is not None and self.queue_out is not None
+def start_transformer(transform, q_in, q_out, backend, stop_event, n_workers):
+    def process_source_exhausted():
+        logging.info('message about exhaustion was received '  
+                     'waiting in queue to be processed')
+        q_in.join()
+        logging.info('in queue was processed, sending message')
+        q_out.put(StopEvent)
+        logging.info('message about exhaustion was send')
 
-
-class LambdaTransformer(Transformer):
-    def __init__(self, f, *, n_workers=1, backend='thread', buffer_size=1,
-                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
-        super().__init__(n_workers=n_workers, backend=backend,
-                         buffer_size=buffer_size, wait_timeout=wait_timeout)
-        self.f = f
-
-    def _worker_target(self):
+    def outer_target():
         try:
-            while True:
-                inputs = self._get_loop()
-                logging.debug('Object received')
-                processed_data = self.f(inputs)
-                logging.debug('Object processed')
-                self._put_loop(processed_data)
-                logging.debug('Object sent further')
-                self.queue_in.task_done()
-        except (ExternalStop, SourceExhausted):
-            pass
-
-
-class Chunker(Transformer):
-    def __init__(self, chunk_size, *, backend='thread', buffer_size=1,
-                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
-        super().__init__(n_workers=1, backend=backend, buffer_size=buffer_size,
-                         wait_timeout=wait_timeout)
-        self.chunk_size = chunk_size
-
-    def _worker_target(self):
-        chunk = []
-        try:
-            while True:
-                inputs = self._get_loop()
-                chunk.append(inputs)
-
-                if len(chunk) == self.chunk_size:
-                    self._put_loop(chunk)
-                    chunk = []
-
-                self.queue_in.task_done()
-        except (ExternalStop, SourceExhausted):
-            pass
-
-
-class Source(_BasicWorkersPool):
-    def __init__(self, iterable: Iterable, *, backend='thread', buffer_size=1,
-                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
-        super().__init__(n_workers=1, backend=backend, buffer_size=buffer_size,
-                         wait_timeout=wait_timeout)
-        self.iterable = iterable
-
-    def _check_consistency(self):
-        return self.queue_out is not None
-
-    def _worker_target(self):
-        iterator = iter(self.iterable)
-        try:
-            while True:
+            for value in iter(q_in.get, StopEvent):
                 try:
-                    inputs = next(iterator)
-                    logging.debug('New object got from iterator')
-                    self._put_loop(inputs)
-                    logging.debug('New object sent further')
-                except StopIteration:
-                    logging.debug('Stop iteration happened on iterator')
-                    self._process_source_exhausted_loop()
-                    raise SourceExhausted
-        except (ExternalStop, SourceExhausted):
+                    transform(value, q_out)
+                finally:
+                    q_in.task_done()
+            else:
+                process_source_exhausted()
+        except StopEvent:
             pass
+        except Exception:
+            stop_event.set()
+            raise
+
+    choose_by_backend(backend, ThreadPool, ProcessPool)(n_workers, outer_target)
 
 
-class _PipelineMonitor:
-    def __init__(self, components: Sequence[_BasicWorkersPool],
-                 wait_timeout=DEFAULT_MONITOR_TIMEOUT):
-        self.wait_timeout = wait_timeout
+def start_one2one_transformer(f, *, q_in, q_out,
+                              stop_event, backend, n_workers):
+    def transform(value, q):
+        processed_value = f(value)
+        q.put(processed_value)
 
-        self.components = components
-        self.stats = deque(maxlen=1000)
+    start_transformer(transform, q_in, q_out, stop_event=stop_event,
+                      backend=backend, n_workers=n_workers)
 
-        self.external_stop_event = threading.Event()
-        self.worker = None
 
-    def _target(self):
-        while not self.external_stop_event.is_set():
-            s = [c.queue_out.qsize() for c in self.components]
-            logging.info(f'queues: {s}')
-            time.sleep(self.wait_timeout)
+def start_many2one_transformer(chunk_size, *, q_in, q_out,
+                               stop_event, backend, n_workers):
+    chunk = []
 
-    def start(self):
-        self.worker = threading.Thread(target=self._target)
-        self.worker.start()
+    def transform(value, q):
+        nonlocal chunk
+        chunk.append(value)
+        if len(chunk) == chunk_size:
+            q.put(chunk)
+            chunk = []
 
-    def stop(self):
-        self.external_stop_event.set()
-        self.worker.join()
+    start_transformer(transform, q_in, q_out, stop_event=stop_event,
+                      backend=backend, n_workers=n_workers)
+
+
+def start_one2many_transformer(extract, *, q_in, q_out,
+                               stop_event, backend, n_workers):
+    def transform(value, q):
+        list(map(q.put, extract(value)))
+
+    start_transformer(transform, q_in, q_out, stop_event=stop_event,
+                      backend=backend, n_workers=n_workers)
+
+
+def start_source(iterable, q_out, stop_event, backend):
+    def target():
+        try:
+            for value in iterable:
+                q_out.put(value)
+                logging.debug('New object sent further')
+            else:
+                q_out.put(StopEvent)
+        except StopEvent:
+            pass
+        except Exception:
+            stop_event.set()
+            raise
+
+    choose_by_backend(backend, Thread, Process)(target=target).start()
+
+
+def start_monitor(queues, stop_event, timeout=DEFAULT_MONITOR_TIMEOUT):
+    def target():
+        while not stop_event.is_set():
+            logging.info('queues: {}'.format(map(lambda q: q.qsize(), queues)))
+            time.sleep(timeout)
+
+    Thread(target=target).start()
 
 
 class Pipeline:
-    def __init__(self, source: Source, *transformers: Transformer,
-                 wait_timeout=DEFAULT_WAIT_TIMEOUT):
+    def __init__(self, source, *transformers, timeout=DEFAULT_TIMEOUT):
         self.components = [source, *transformers]
-        self.wait_timeout = wait_timeout
+        self.timeout = timeout
 
         # Connect transformers with queues
         self._connect_components(self.components)
@@ -271,7 +168,7 @@ class Pipeline:
         for c_in, c_out in zip(components[:-1], components[1:]):
             buffer_size = c_in.buffer_size
             if c_in.backend == 'thread' and c_out.backend == 'thread':
-                q = queue.Queue(buffer_size)
+                q = ThreadQueue(buffer_size)
             else:
                 q = multiprocessing.JoinableQueue(buffer_size)
 
@@ -279,7 +176,7 @@ class Pipeline:
 
         c = components[-1]
         if c.backend == 'thread':
-            c.queue_out = queue.Queue(c.buffer_size)
+            c.queue_out = ThreadQueue(c.buffer_size)
         elif c.backend == 'process':
             c.queue_out = multiprocessing.JoinableQueue(c.buffer_size)
         else:
@@ -315,7 +212,7 @@ class Pipeline:
         assert self.pipeline_active
         while True:
             try:
-                data = self.queue.get(timeout=self.wait_timeout)
+                data = self.queue.get(timeout=self.timeout)
             except queue.Empty:
                 continue
             # This is slightly shady. In this case pipeline monitor might
