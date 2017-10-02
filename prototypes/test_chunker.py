@@ -1,6 +1,6 @@
 from tqdm import tqdm
 
-from pdp import Pipeline, Source, Chunker
+from pdp import Pipeline, Source, Many2One
 
 
 if __name__ == '__main__':
@@ -8,7 +8,7 @@ if __name__ == '__main__':
 
     pipeline = Pipeline(
         Source(patients, buffer_size=40),
-        Chunker(10, buffer_size=4)
+        Many2One(20, buffer_size=4)
     )
 
     with pipeline:
