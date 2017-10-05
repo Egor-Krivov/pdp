@@ -20,7 +20,8 @@ class TransformerDescription:
 
 
 class One2One(TransformerDescription):
-    def __init__(self, f, *, backend=Backend.THREAD, n_workers, buffer_size=1):
+    def __init__(self, f, *, backend=Backend.THREAD, n_workers=1,
+                 buffer_size=1):
         super().__init__(backend, n_workers, buffer_size)
         self.start = partial(start_one2one_transformer, f=f, backend=backend,
                              n_workers=n_workers)
@@ -34,7 +35,7 @@ class Many2One(TransformerDescription):
 
 
 class One2Many(TransformerDescription):
-    def __init__(self, f, *, backend=Backend.THREAD, n_workers, buffer_size):
+    def __init__(self, f, *, backend=Backend.THREAD, n_workers=1, buffer_size):
         super().__init__(backend, n_workers, buffer_size)
         self.start = partial(start_one2many_transformer, f=f, backend=backend,
                              n_workers=n_workers)

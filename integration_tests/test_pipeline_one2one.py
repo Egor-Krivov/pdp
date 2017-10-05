@@ -37,3 +37,25 @@ class TestPipelineOne2One(unittest.TestCase):
         for n_workers, backend in product([1, 10], [THREAD]):
             with self.subTest(f'backend = {backend}; n_workers = {n_workers}'):
                 self.check_pass(backend, n_workers)
+
+    def check_fail(self, backend, n_workers):
+        def f(x):
+            raise ValueError()
+
+        data_in = np.random.randn(self.data_size)
+
+        pipeline = Pipeline(
+            Source(data_in, backend=backend, buffer_size=self.buffer_size),
+            One2One(f, backend=backend, n_workers=n_workers,
+                    buffer_size=self.buffer_size)
+        )
+
+        with pipeline:
+            data_out = [*pipeline]
+
+    @unittest.skip('Add error message')
+    def test_fail(self):
+        for n_workers, backend in product([1, 10], [THREAD]):
+            with self.subTest(
+                    f'backend = {backend}; n_workers = {n_workers}'):
+                self.check_fail(backend, n_workers)

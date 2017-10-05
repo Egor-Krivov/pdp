@@ -26,6 +26,7 @@ class SourceExhausted:
     """Message, that is send through pipe if source was exhausted. When
     received, each worker waits for it's colleagues at the same stage and
     transmits it further."""
+
     def __eq__(self, other):
         return type(other) is SourceExhausted
 
