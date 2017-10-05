@@ -3,7 +3,8 @@ from multiprocessing import JoinableQueue as ProcessQueue
 from threading import Event as ThreadEvent
 from multiprocessing import Event as ProcessEvent
 
-from .base import LoopedQueue, start_monitor, StopEvent
+from .base import InterruptableQueue, SourceExhausted, StopEvent
+from .monitor import start_monitor
 from .backend import Backend
 from .log import logging
 
@@ -15,14 +16,17 @@ class Pipeline:
         self.components = [source, *transformers]
         self.timeout = timeout
 
-        self.stop_event = {True: ProcessEvent, False: ThreadEvent}[
-            max(map(lambda x: x.backend is Backend.PROCESS, self.components))
-        ]()
-        self.queues = self._connect_components(self.components)
+        if Backend.PROCESS in map(lambda c: c.backend, self.components):
+            self.stop_event = ProcessEvent()
+        else:
+            self.stop_event = ThreadEvent()
+        self.queues = self._connect_components(self.components, self.stop_event,
+                                               self.timeout)
 
         self.pipeline_active = False
 
-    def _connect_components(self, components):
+    @staticmethod
+    def _connect_components(components, stop_event, timeout):
         queues = []
         pick = {True: ThreadQueue, False: ProcessQueue}
 
@@ -30,18 +34,25 @@ class Pipeline:
             Queue = pick[c_in.backend is Backend.THREAD and
                          c_out.backend is Backend.THREAD]
 
-            queues.append(LoopedQueue(Queue(c_in.buffer_size), self.timeout,
-                                      stop_event=self.stop_event))
+            logging.debug(Queue)
+
+            queues.append(InterruptableQueue(Queue(c_in.buffer_size), timeout,
+                                             stop_event=stop_event))
 
         Queue = pick[components[-1].backend is Backend.THREAD]
-        queues.append(LoopedQueue(Queue(components[-1].buffer_size),
-                                  self.timeout, stop_event=self.stop_event))
+        logging.debug(Queue)
+        queues.append(InterruptableQueue(Queue(components[-1].buffer_size),
+                                         timeout, stop_event=stop_event))
         return queues
 
     def _start(self):
         assert not self.pipeline_active
-        for c in self.components:
-            c.start()
+        self.components[0].start(q_out=self.queues[0],
+                                 stop_event=self.stop_event)
+        for c, q_in, q_out in zip(self.components[1:], self.queues,
+                                  self.queues[1:]):
+            c.start(q_in=q_in, q_out=q_out, stop_event=self.stop_event)
+
         start_monitor(self.queues, self.stop_event)
 
         self.pipeline_active = True
@@ -64,22 +75,18 @@ class Pipeline:
     def __iter__(self):
         assert self.pipeline_active
         queue = self.queues[-1]
-        while True:
-            data = queue.get()
-            # This is slightly shady. In this case pipeline monitor might
-            # start thinking that pipeline was exhausted. It won't
-            # affect __iter__ until the next request though, but might speed
-            # up stopping of iteration.
+
+        for data in iter(queue.get, SourceExhausted()):
             queue.task_done()
 
-            if data is StopEvent:
-                logging.debug('Pipeline was exhausted, checking that all'
-                              'workers were stopped')
-                self._stop()
-                logging.debug('Pipeline was exhausted, all workers'
-                              'were stopped')
-
-                raise StopIteration
             logging.info('Pipeline: next returned')
             yield data
             logging.info('Pipeline: next called')
+        else:
+            logging.debug('Pipeline was exhausted, checking that all '
+                          'workers were stopped')
+            self._stop()
+            logging.debug('Pipeline was exhausted, all workers'
+                          'were stopped')
+
+            raise StopIteration
