@@ -1,6 +1,5 @@
 import time
 import unittest
-from itertools import product
 from functools import lru_cache
 
 import numpy as np
@@ -28,19 +27,20 @@ class TestPipeline(unittest.TestCase):
 
         @lru_cache(len(patient_ids))
         def load_data(patient_id):
-            x = np.random.randn(2, 240, 240, 240)
-            y = np.random.randn(240, 240, 240)
+            x = np.random.randn(2, 100, 100, 100)
+            y = np.random.randn(100, 100, 100)
             return Patient(patient_id, x, y)
 
         @lru_cache(len(patient_ids))
         def find_cancer(patient: Patient):
             cancer_mask = patient.x.sum(axis=0) > 0
 
-            return patient.x, patient.y
+            return patient.x, patient.y, cancer_mask
 
         @pack_args
-        def work(x, y):
+        def work(x, y, cancer_mask):
             x.mean()
+            cancer_mask.std()
             return x, y
 
         @pack_args

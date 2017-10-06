@@ -3,7 +3,7 @@ from itertools import product
 
 import numpy as np
 
-from pdp import One2One, Source, Pipeline, THREAD, PROCESS
+from pdp import One2One, Source, Pipeline, THREAD, PROCESS, StopEvent
 
 
 class TestPipelineOne2One(unittest.TestCase):
@@ -50,10 +50,10 @@ class TestPipelineOne2One(unittest.TestCase):
                     buffer_size=self.buffer_size)
         )
 
-        with pipeline:
-            data_out = [*pipeline]
+        with self.assertRaises(StopEvent):
+            with pipeline:
+                data_out = [*pipeline]
 
-    @unittest.skip('Add error message')
     def test_fail(self):
         for n_workers, backend in product([1, 10], [THREAD]):
             with self.subTest(

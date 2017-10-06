@@ -76,17 +76,19 @@ class Pipeline:
         assert self.pipeline_active
         queue = self.queues[-1]
 
-        for data in iter(queue.get, SourceExhausted()):
-            queue.task_done()
+        try:
+            for data in iter(queue.get, SourceExhausted()):
+                queue.task_done()
 
-            logging.info('Pipeline: next returned')
-            yield data
-            logging.info('Pipeline: next called')
-        else:
-            logging.debug('Pipeline was exhausted, checking that all '
-                          'workers were stopped')
-            self._stop()
-            logging.debug('Pipeline was exhausted, all workers'
-                          'were stopped')
-
-            raise StopIteration
+                logging.info('Pipeline: next returned')
+                yield data
+                logging.info('Pipeline: next called')
+            else:
+                logging.debug('Pipeline was exhausted, checking that all '
+                              'workers were stopped')
+                self._stop()
+                logging.debug('Pipeline was exhausted, all workers'
+                              'were stopped')
+        except StopEvent:
+            raise StopEvent('pdp: Error in the tread or process was detected, '
+                            'check output for details.') from None

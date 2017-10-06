@@ -1,5 +1,6 @@
 import unittest
 import time
+from contextlib import suppress
 from queue import Queue as ThreadQueue
 from threading import Thread
 from threading import Event as ThreadEvent
@@ -32,7 +33,11 @@ class TestInterruptableQueue(unittest.TestCase):
                                     self.loop_timeout, self.stop_event)
 
     def test_get(self):
-        thread = Thread(target=self.q.get)
+        def target():
+            with suppress(StopEvent):
+                self.q.get()
+
+        thread = Thread(target=target)
         thread.start()
         self.assertTrue(thread.is_alive())
         set_event_after_timeout(
@@ -49,7 +54,11 @@ class TestInterruptableQueue(unittest.TestCase):
         for i in range(self.maxsize):
             self.q.put(i)
 
-        thread = Thread(target=self.q.put, args=(-1,))
+        def target():
+            with suppress(StopEvent):
+                self.q.put(-1)
+
+        thread = Thread(target=target)
         thread.start()
 
         self.assertTrue(thread.is_alive())
