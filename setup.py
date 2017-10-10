@@ -31,7 +31,7 @@ setup(
     python_requires='>=3.5',
     keywords='pipeline parallel thread data processing augmentation',
 
-    packages=find_packages(exclude=['tests', 'prototypes']),
+    packages=find_packages(exclude=['examples', 'tests', 'prototypes']),
     include_package_data=True,
 
     install_requires=[]
