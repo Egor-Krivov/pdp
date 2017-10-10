@@ -5,13 +5,13 @@ with open('README.rst') as file:
 
 setup(
     name='pdp',
-    version='0.1',
+    version='v0.1',
 
     description='Build fast data processing pipelines easily',
     long_description=long_description,
 
     url='https://github.com/Egor-Krivov/pdp',
-    download_url='https://github.com/Egor-Krivov/pdp/archive/0.1.tar.gz',
+    download_url='https://github.com/Egor-Krivov/pdp/archive/v0.1.tar.gz',
 
     author='Egor-Krivov',
     author_email='e.a.krivov@gmail.com',
