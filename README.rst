@@ -16,4 +16,4 @@ Are in repository in *examples* folder
 
 Is it fast? 
 -----------
-Speed and parallel execution is a top priority. Right now threads are used to exchange information between pipline stages, because it's memory and CPU efficient to exchange data between threads and not processes. Python's threads are flawed by GIL, but it doesn't effect performance for IO-bound tasks and for numpy operations. Since all operations for data augmentations are likely to be done in numpy operations, performance will not be significantly affected by GIT.
+Speed and parallel execution is a top priority. Right now threads are used to exchange information between pipline stages, because it's memory and CPU efficient to exchange data between threads and not processes. Python's threads are flawed by GIL, but it doesn't effect performance for IO-bound tasks and for numpy operations. Since all operations for data augmentations are likely to be done in numpy operations, performance will not be significantly affected by GIL.
