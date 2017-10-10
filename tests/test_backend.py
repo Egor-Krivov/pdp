@@ -1,6 +1,6 @@
 import unittest
 
-from .backend import THREAD, PROCESS, Backend, check_backend, choose_backend
+from pdp.backend import THREAD, PROCESS, Backend, check_backend, choose_backend
 
 
 class TestBackend(unittest.TestCase):

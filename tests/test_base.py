@@ -7,8 +7,8 @@ from threading import Event as ThreadEvent
 
 import numpy as np
 
-from .base import InterruptableQueue, StopEvent, start_one2one_transformer
-from .backend import THREAD
+from pdp.base import InterruptableQueue, StopEvent, start_one2one_transformer
+from pdp.backend import THREAD
 
 DEFAULT_LOOP_TIMEOUT = 0.02
 
