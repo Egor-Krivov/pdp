@@ -19,7 +19,6 @@ DEFAULT_MONITOR_TIMEOUT = 1
 class StopEvent(Exception):
     """Exception, need to stop worker. Should be
     handled internally by worker's target during execution."""
-    pass
 
 
 class SourceExhausted:
@@ -59,8 +58,7 @@ class InterruptableQueue:
 def start_transformer(process_data, q_in, q_out, backend, stop_event,
                       n_workers):
     def process_source_exhausted():
-        logging.info('Transformer: message about exhaustion was received '
-                     'waiting for in queue to be processed')
+        logging.info('Transformer: message about exhaustion was received waiting for in queue to be processed')
         # Wait for other threads from current pool to process all data
         q_in.join()
         logging.info('Transformer: in queue was processed, sending message')
@@ -95,17 +93,14 @@ def start_transformer(process_data, q_in, q_out, backend, stop_event,
     pool.close()
 
 
-def start_one2one_transformer(f, *, q_in, q_out, stop_event, backend,
-                              n_workers):
+def start_one2one_transformer(f, *, q_in, q_out, stop_event, backend, n_workers):
     def process_data(value):
         q_out.put(f(value))
 
-    start_transformer(process_data, q_in, q_out, stop_event=stop_event,
-                      backend=backend, n_workers=n_workers)
+    start_transformer(process_data, q_in, q_out, stop_event=stop_event, backend=backend, n_workers=n_workers)
 
 
-def start_many2one_transformer(chunk_size, *, q_in, q_out,
-                               stop_event, backend, n_workers):
+def start_many2one_transformer(chunk_size, *, q_in, q_out, stop_event, backend, n_workers):
     chunk = []
 
     def process_data(value):
@@ -115,18 +110,15 @@ def start_many2one_transformer(chunk_size, *, q_in, q_out,
             q_out.put(chunk)
             chunk = []
 
-    start_transformer(process_data, q_in, q_out, stop_event=stop_event,
-                      backend=backend, n_workers=n_workers)
+    start_transformer(process_data, q_in, q_out, stop_event=stop_event, backend=backend, n_workers=n_workers)
 
 
-def start_one2many_transformer(f, *, q_in, q_out, stop_event, backend,
-                               n_workers):
+def start_one2many_transformer(f, *, q_in, q_out, stop_event, backend, n_workers):
     def transform(value):
         for o in f(value):
             q_out.put(o)
 
-    start_transformer(transform, q_in, q_out, stop_event=stop_event,
-                      backend=backend, n_workers=n_workers)
+    start_transformer(transform, q_in, q_out, stop_event=stop_event, backend=backend, n_workers=n_workers)
 
 
 def start_source(iterable, q_out, stop_event, backend):
@@ -137,8 +129,7 @@ def start_source(iterable, q_out, stop_event, backend):
                 q_out.put(value)
                 logging.debug('Source: new object was sent further')
             else:
-                logging.info('Source: iterable was exhausted, transmitting '
-                             'message...')
+                logging.info('Source: iterable was exhausted, transmitting message...')
                 q_out.put(SourceExhausted())
                 logging.info('Source: message was transmitted')
         except StopEvent:

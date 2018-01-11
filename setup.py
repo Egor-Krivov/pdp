@@ -1,17 +1,19 @@
 from setuptools import setup, find_packages
 
+version = 'v0.2.1'
+
 with open('README.rst') as file:
     long_description = file.read()
 
 setup(
     name='pdp',
-    version='v0.1',
+    version=version,
 
     description='Build fast data processing pipelines easily',
     long_description=long_description,
 
     url='https://github.com/Egor-Krivov/pdp',
-    download_url='https://github.com/Egor-Krivov/pdp/archive/v0.1.tar.gz',
+    download_url='https://github.com/Egor-Krivov/pdp/archive/{}.tar.gz'.format(version),
 
     author='Egor-Krivov',
     author_email='e.a.krivov@gmail.com',

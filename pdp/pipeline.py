@@ -20,8 +20,7 @@ class Pipeline:
             self.stop_event = ProcessEvent()
         else:
             self.stop_event = ThreadEvent()
-        self.queues = self._connect_components(self.components, self.stop_event,
-                                               self.timeout)
+        self.queues = self._connect_components(self.components, self.stop_event, self.timeout)
 
         self.pipeline_active = False
 
@@ -31,26 +30,21 @@ class Pipeline:
         pick = {True: ThreadQueue, False: ProcessQueue}
 
         for c_in, c_out in zip(components[:-1], components[1:]):
-            Queue = pick[c_in.backend is Backend.THREAD and
-                         c_out.backend is Backend.THREAD]
+            Queue = pick[c_in.backend is Backend.THREAD and c_out.backend is Backend.THREAD]
 
             logging.debug(Queue)
 
-            queues.append(InterruptableQueue(Queue(c_in.buffer_size), timeout,
-                                             stop_event=stop_event))
+            queues.append(InterruptableQueue(Queue(c_in.buffer_size), timeout, stop_event=stop_event))
 
         Queue = pick[components[-1].backend is Backend.THREAD]
         logging.debug(Queue)
-        queues.append(InterruptableQueue(Queue(components[-1].buffer_size),
-                                         timeout, stop_event=stop_event))
+        queues.append(InterruptableQueue(Queue(components[-1].buffer_size), timeout, stop_event=stop_event))
         return queues
 
     def _start(self):
         assert not self.pipeline_active
-        self.components[0].start(q_out=self.queues[0],
-                                 stop_event=self.stop_event)
-        for c, q_in, q_out in zip(self.components[1:], self.queues,
-                                  self.queues[1:]):
+        self.components[0].start(q_out=self.queues[0], stop_event=self.stop_event)
+        for c, q_in, q_out in zip(self.components[1:], self.queues, self.queues[1:]):
             c.start(q_in=q_in, q_out=q_out, stop_event=self.stop_event)
 
         start_monitor(self.queues, self.stop_event)
@@ -84,11 +78,8 @@ class Pipeline:
                 yield data
                 logging.info('Pipeline: next called')
             else:
-                logging.debug('Pipeline was exhausted, checking that all '
-                              'workers were stopped')
+                logging.debug('Pipeline was exhausted, checking that all workers were stopped')
                 self._stop()
-                logging.debug('Pipeline was exhausted, all workers'
-                              'were stopped')
+                logging.debug('Pipeline was exhausted, all workers were stopped')
         except StopEvent:
-            raise StopEvent('pdp: Error in the tread or process was detected, '
-                            'check output for details.') from None
+            raise StopEvent('pdp: Error in the tread or process was detected, check output for details.') from None

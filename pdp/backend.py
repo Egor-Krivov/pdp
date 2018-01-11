@@ -16,8 +16,7 @@ def check_backend(backend):
         raise TypeError('Wrong backend type, requires Backend type')
     else:
         if backend is PROCESS:
-            raise ValueError('Process backend is not tested yet, use thread '
-                             'instead')
+            raise ValueError('Process backend is not tested yet, use thread instead')
         return backend
 
 
