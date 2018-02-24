@@ -20,4 +20,4 @@ Speed and parallel execution is a top priority. Right now threads are used to ex
 
 Installation
 ----------
-pip install pdp
+:code:`pip install pdp`
