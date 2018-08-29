@@ -23,7 +23,7 @@ def product_generator(source: Source, *transformers: TransformerDescription):
 
 
 def combine_batches(inputs):
-    return [np.array(o) for o in zip(*inputs)]
+    return tuple(zip(*inputs))
 
 
 def pack_args(func):
