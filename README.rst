@@ -8,7 +8,7 @@ Many tasks in machine learning, deep learning and other fields require complex d
 
 Use cases
 --------------
-* Neural Net training, where you need a way to train net, load data from the disk and augment it. PDP allows user to do all these things at the same time without need to use *threading* or *multiprocessing* python modules directly.
+* Neural Net training, where you need a way to train net, load data from the disk and augment it. PDP allows user to do all these things at the same time without need to use *threading* module directly.
 
 Examples
 --------
@@ -19,5 +19,5 @@ Is it fast?
 Speed and parallel execution is a top priority. Right now threads are used to exchange information between pipline stages, because it's memory and CPU efficient to exchange data between threads and not processes. Python's threads are flawed by GIL, but it doesn't affect performance for IO-bound tasks and for numpy operations. Since all operations for data augmentations are likely to be done in numpy operations, performance will not be significantly affected by GIL.
 
 Installation
-----------
+------------
 :code:`pip install pdp`

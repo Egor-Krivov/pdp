@@ -1,37 +1,29 @@
 from contextlib import suppress
 
 from queue import Empty, Full
-from queue import Queue as ThreadQueue
-from threading import Event as ThreadEvent
+from queue import Queue
+from threading import Event
 from threading import Thread
-from multiprocessing import Process
-from multiprocessing.pool import Pool as ProcessPool
 from multiprocessing.pool import ThreadPool
 
-from .backend import choose_backend
 from .log import logging
-
-# TODO chunker eats remaining data
-
-DEFAULT_MONITOR_TIMEOUT = 1
 
 
 class StopEvent(Exception):
-    """Exception, need to stop worker. Should be
-    handled internally by worker's target during execution."""
+    """Exception, used to stop worker. Should be handled internally by worker's target during execution."""
 
 
 class SourceExhausted:
-    """Message, that is send through pipe if source was exhausted. When
-    received, each worker waits for it's colleagues at the same stage and
-    transmits it further."""
+    """Message, that is send through pipe if source was exhausted. When received, each worker waits for it's colleagues
+    at the same stage to finish processing and transmits it further."""
 
     def __eq__(self, other):
         return type(other) is SourceExhausted
 
 
 class InterruptableQueue:
-    def __init__(self, queue: ThreadQueue, timeout, stop_event: ThreadEvent):
+    """Queue with get and put that can be interrupted by setting ``stop_event`` flag."""
+    def __init__(self, queue: Queue, timeout, stop_event: Event):
         self.queue = queue
         self.timeout = timeout
         self.stop_event = stop_event
@@ -55,52 +47,52 @@ class InterruptableQueue:
         return getattr(self.queue, name)
 
 
-def start_transformer(process_data, q_in, q_out, backend, stop_event,
-                      n_workers):
-    def process_source_exhausted():
-        logging.info('Transformer: message about exhaustion was received waiting for in queue to be processed')
-        # Wait for other threads from current pool to process all data
-        q_in.join()
-        logging.info('Transformer: in queue was processed, sending message')
-        q_out.put(SourceExhausted())
-        logging.info('Transformer: message about exhaustion was sent')
+def process_source_exhausted(q_in, q_out):
+    """Only one worker from the pool receives SourceExhausted message, the rest finishes processing already received
+    objects, get stuck waiting for the next input and get closed with the whole pipeline once ``stop_event`` is set."""
+    logging.info('message about exhaustion was received')
+    q_in.join()
+    logging.info('transformer: in queue was joined, sending message')
+    q_out.put(SourceExhausted())
+    logging.info('transformer: message about exhaustion was sent further')
 
+
+def start_transformer(process_data, q_in, q_out, stop_event, n_workers):
     def target():
         try:
             for value in iter(q_in.get, SourceExhausted()):
                 try:
-                    logging.debug('Transformer: data received, processing...')
+                    logging.debug('transformer: data received, processing...')
                     process_data(value)
-                    logging.debug('Transformer: data was processed')
+                    logging.debug('transformer: data was processed')
                 finally:
                     q_in.task_done()
             else:
-                logging.info('Transformer: "source exhausted" received')
+                logging.info('transformer: "source exhausted" received')
                 q_in.task_done()
-                process_source_exhausted()
-                logging.info('Transformer: "source exhausted" transmitted')
+                process_source_exhausted(q_in, q_out)
+                logging.info('transformer: "source exhausted" transmitted')
         except StopEvent:
-            pass
+            logging.info('transformer: stop event raised')
         except Exception:
-            logging.error('Transformer: error occured setting event...')
+            logging.error('transformer: error occurred setting event...')
             stop_event.set()
-            logging.error('Transformer: event was set')
+            logging.error('transformer: event was set')
             raise
 
-    pool = choose_backend(backend, ThreadPool, ProcessPool)(n_workers, target)
-    # For pool it means that current work is final and pool should be closed,
-    # once it's finished.
+    pool = ThreadPool(n_workers, target)
+    # For pool it means that current task is the last one and pool should be closed, once it's finished.
     pool.close()
 
 
-def start_one2one_transformer(f, *, q_in, q_out, stop_event, backend, n_workers):
+def start_one2one_transformer(f, *, q_in, q_out, stop_event, n_workers):
     def process_data(value):
         q_out.put(f(value))
 
-    start_transformer(process_data, q_in, q_out, stop_event=stop_event, backend=backend, n_workers=n_workers)
+    start_transformer(process_data, q_in, q_out, stop_event=stop_event, n_workers=n_workers)
 
 
-def start_many2one_transformer(chunk_size, *, q_in, q_out, stop_event, backend, n_workers):
+def start_many2one_transformer(chunk_size, *, q_in, q_out, stop_event, n_workers):
     chunk = []
 
     def process_data(value):
@@ -110,18 +102,19 @@ def start_many2one_transformer(chunk_size, *, q_in, q_out, stop_event, backend, 
             q_out.put(chunk)
             chunk = []
 
-    start_transformer(process_data, q_in, q_out, stop_event=stop_event, backend=backend, n_workers=n_workers)
+    start_transformer(process_data, q_in, q_out, stop_event=stop_event, n_workers=n_workers)
 
 
-def start_one2many_transformer(f, *, q_in, q_out, stop_event, backend, n_workers):
+def start_one2many_transformer(f, *, q_in, q_out, stop_event, n_workers):
     def transform(value):
-        for o in f(value):
+        values = f(value)
+        for o in values:
             q_out.put(o)
 
-    start_transformer(transform, q_in, q_out, stop_event=stop_event, backend=backend, n_workers=n_workers)
+    start_transformer(transform, q_in, q_out, stop_event=stop_event, n_workers=n_workers)
 
 
-def start_source(iterable, q_out, stop_event, backend):
+def start_source(iterable, q_out, stop_event):
     def target():
         try:
             for value in iterable:
@@ -140,4 +133,4 @@ def start_source(iterable, q_out, stop_event, backend):
             logging.error('Source: event was set')
             raise
 
-    choose_backend(backend, Thread, Process)(target=target).start()
+    Thread(target=target).start()

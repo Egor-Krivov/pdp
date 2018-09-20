@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-version = 'v0.2.1'
+version = 'v0.3.0'
 
 with open('README.rst') as file:
     long_description = file.read()
@@ -28,6 +28,7 @@ setup(
 
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
     ],
 
     python_requires='>=3.5',

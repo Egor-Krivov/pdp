@@ -4,8 +4,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from pdp import One2One, One2Many, Many2One, Source, Pipeline, THREAD, \
-    pack_args, combine_batches
+from pdp import One2One, One2Many, Many2One, Source, Pipeline, unpack_args, combine_batches
 
 
 class Patient:
@@ -19,10 +18,7 @@ class Patient:
 
 
 class TestPipeline(unittest.TestCase):
-    def setUp(self):
-        pass
-
-    def test_pipeline(self, backend=THREAD):
+    def test_pipeline(self):
         patient_ids = [f'patient_{i}' for i in range(5)]
 
         @lru_cache(len(patient_ids))
@@ -37,24 +33,24 @@ class TestPipeline(unittest.TestCase):
 
             return patient.x, patient.y, cancer_mask
 
-        @pack_args
+        @unpack_args
         def work(x, y, cancer_mask):
             x.mean()
             cancer_mask.std()
             return x, y
 
-        @pack_args
+        @unpack_args
         def first2(x, y):
             return y[:2]
 
         pipeline = Pipeline(
-            Source(patient_ids * 10, backend=backend, buffer_size=10),
-            One2One(load_data, backend=backend, buffer_size=10),
-            One2One(find_cancer, backend=backend, buffer_size=100),
-            One2One(work, backend=backend, buffer_size=10, n_workers=3),
-            One2Many(first2, backend=backend, buffer_size=50),
-            Many2One(5, backend=backend, buffer_size=10),
-            One2One(combine_batches, backend=backend, buffer_size=3)
+            Source(patient_ids * 10, buffer_size=10),
+            One2One(load_data, buffer_size=10),
+            One2One(find_cancer, buffer_size=100),
+            One2One(work, buffer_size=10, n_workers=3),
+            One2Many(first2, buffer_size=50),
+            Many2One(5, buffer_size=10),
+            One2One(combine_batches, buffer_size=3)
         )
 
         with pipeline:

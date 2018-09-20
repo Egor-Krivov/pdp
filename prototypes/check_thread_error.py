@@ -6,6 +6,7 @@ def target():
     time.sleep(1)
     assert False
 
+
 thread = threading.Thread(target=target)
 thread.start()
 

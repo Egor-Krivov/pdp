@@ -8,7 +8,6 @@ from threading import Event as ThreadEvent
 import numpy as np
 
 from pdp.base import InterruptableQueue, StopEvent, start_one2one_transformer
-from pdp.backend import THREAD
 
 DEFAULT_LOOP_TIMEOUT = 0.02
 
@@ -29,8 +28,7 @@ class TestInterruptableQueue(unittest.TestCase):
         self.receive_timeout = 0.5 * self.loop_timeout
 
         self.stop_event = ThreadEvent()
-        self.q = InterruptableQueue(ThreadQueue(self.maxsize),
-                                    self.loop_timeout, self.stop_event)
+        self.q = InterruptableQueue(ThreadQueue(self.maxsize), self.loop_timeout, self.stop_event)
 
     def test_get(self):
         def target():
@@ -40,10 +38,7 @@ class TestInterruptableQueue(unittest.TestCase):
         thread = Thread(target=target)
         thread.start()
         self.assertTrue(thread.is_alive())
-        set_event_after_timeout(
-            event=self.stop_event,
-            timeout=self.wait_timeout + self.receive_timeout
-        )
+        set_event_after_timeout(event=self.stop_event, timeout=self.wait_timeout + self.receive_timeout)
         self.assertTrue(thread.is_alive())
         time.sleep(self.wait_timeout)
         self.assertTrue(thread.is_alive())
@@ -62,10 +57,7 @@ class TestInterruptableQueue(unittest.TestCase):
         thread.start()
 
         self.assertTrue(thread.is_alive())
-        set_event_after_timeout(
-            event=self.stop_event,
-            timeout=self.wait_timeout + self.receive_timeout
-        )
+        set_event_after_timeout(event=self.stop_event, timeout=self.wait_timeout + self.receive_timeout)
         self.assertTrue(thread.is_alive())
         time.sleep(self.wait_timeout)
         self.assertTrue(thread.is_alive())
@@ -78,10 +70,8 @@ class testOne2One(unittest.TestCase):
         self.buffer_size = 20
         self.loop_timeout = DEFAULT_LOOP_TIMEOUT
         self.stop_event = ThreadEvent()
-        self.q_in = InterruptableQueue(ThreadQueue(self.buffer_size),
-                                       self.loop_timeout, self.stop_event)
-        self.q_out = InterruptableQueue(ThreadQueue(self.buffer_size),
-                                        self.loop_timeout, self.stop_event)
+        self.q_in = InterruptableQueue(ThreadQueue(self.buffer_size), self.loop_timeout, self.stop_event)
+        self.q_out = InterruptableQueue(ThreadQueue(self.buffer_size), self.loop_timeout, self.stop_event)
 
     def tearDown(self):
         self.q_in.join()
@@ -89,14 +79,13 @@ class testOne2One(unittest.TestCase):
 
     def data_pass(self, n_workers):
         data_in = np.random.randn(self.buffer_size * 10)
-        data_out_true = data_in ** 2
 
         def f(x):
             return x ** 2
 
-        start_one2one_transformer(f, q_in=self.q_in, q_out=self.q_out,
-                                  stop_event=self.stop_event, backend=THREAD,
-                                  n_workers=n_workers)
+        data_out_true = f(data_in)
+
+        start_one2one_transformer(f, q_in=self.q_in, q_out=self.q_out, stop_event=self.stop_event, n_workers=n_workers)
 
         i = 0
         data_out = []
@@ -116,8 +105,7 @@ class testOne2One(unittest.TestCase):
 
         np.testing.assert_equal(data_out, data_out_true)
 
-    def test_data_pass_1_worker(self):
-        self.data_pass(1)
-
-    def test_data_pass_n_workers(self):
-        self.data_pass(4)
+    def test_data_pass(self):
+        for n_workers in (1, 4, 10):
+            with self.subTest(f'n_workers={n_workers}'):
+                self.data_pass(n_workers=n_workers)
